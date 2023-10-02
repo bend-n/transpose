@@ -13,7 +13,7 @@ fn bench_oop_transpose<T: Copy + Default>(c: &mut Criterion, tyname: &str) {
             let mut buffer = vec![T::default(); width * height];
             let mut scratch = vec![T::default(); width * height];
 
-            b.iter(|| { mattr::transpose(&mut buffer, &mut scratch, width, height); });
+            b.iter(|| unsafe { mattr::transpose(&mut buffer, &mut scratch, width, height); });
         },
         sizes)
         .throughput(|&&(width, height)| Throughput::Bytes((width * height * mem::size_of::<T>()) as u64))

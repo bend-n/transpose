@@ -17,7 +17,7 @@ fn test_out_of_place_transpose() {
             let input = gen_data(width, height);
             let mut output = vec![0; width * height];
 
-            mattr::transpose(&input, &mut output, width, height);
+            unsafe { mattr::transpose(&input, &mut output, width, height) };
 
             for x in 0..width {
                 for y in 0..height {
