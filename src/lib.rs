@@ -378,7 +378,7 @@ pub unsafe fn transpose<T: Copy>(
         panic!();
         #[cfg(not(debug_assertions))]
         unsafe {
-            std::hint::unreachable_unchecked()
+            core::hint::unreachable_unchecked()
         };
     }
     if input.len() <= SMALL_LEN {
