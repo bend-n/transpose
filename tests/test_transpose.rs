@@ -1,3 +1,5 @@
+use std::mem::transmute;
+
 fn gen_data(width: usize, height: usize) -> Vec<usize> {
     (0..width*height).collect()
 }
@@ -17,7 +19,7 @@ fn test_out_of_place_transpose() {
             let input = gen_data(width, height);
             let mut output = vec![0; width * height];
 
-            unsafe { mattr::transpose(&input, &mut output, width, height) };
+            unsafe { mattr::transpose(&input,transmute(output.as_mut_slice()), width, height) };
 
             for x in 0..width {
                 for y in 0..height {

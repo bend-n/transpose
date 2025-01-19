@@ -2,6 +2,7 @@
 //!
 //! This library treats Rust slices as flattened row-major 2D arrays, and provides functions to transpose these 2D arrays, so that the row data becomes the column data, and vice versa.
 //! ```
+//! use std::mem::transmute;
 //! // Create a 2D array in row-major order: the rows of our 2D array are contiguous,
 //! // and the columns are strided
 //! let input_array = vec![ 1, 2, 3,
@@ -9,7 +10,7 @@
 //!
 //! // Treat our 6-element array as a 2D 3x2 array, and transpose it to a 2x3 array
 //! let mut output_array = vec![0; 6];
-//! transpose::transpose(&input_array, &mut output_array, 3, 2);
+//! unsafe { mattr::transpose(&input_array, transmute(&mut *output_array), 3, 2) };
 //!
 //! // The rows have become the columns, and the columns have become the rows
 //! let expected_array =  vec![ 1, 4,
@@ -19,7 +20,7 @@
 //!
 //! // If we transpose our data again, we should get our original data back.
 //! let mut final_array = vec![0; 6];
-//! transpose::transpose(&output_array, &mut final_array, 2, 3);
+//! unsafe { mattr::transpose(&output_array, transmute(&mut *final_array), 2, 3) };
 //! assert_eq!(final_array, input_array);
 //! ```
 //!
@@ -34,7 +35,20 @@
 //! - Large: recursively split the array into smaller parts until each part is of a good size for the tiling algorithm, and then transpose each part.  
 
 #![no_std]
+#![allow(internal_features, incomplete_features)]
+#![feature(
+    generic_const_exprs,
+    maybe_uninit_array_assume_init,
+    const_mut_refs,
+    const_refs_to_cell,
+    const_maybe_uninit_array_assume_init,
+    core_intrinsics,
+    const_maybe_uninit_write,
+    const_eval_select
+)]
 
+use core::intrinsics::const_eval_select;
+use core::mem::MaybeUninit as MU;
 // Block size used by the tiling algoritms
 const BLOCK_SIZE: usize = 16;
 // Number of segments used by the segmented block transpose function
@@ -50,14 +64,22 @@ const MEDIUM_LEN: usize = 1024 * 1024;
 /// Given an array of size width * height, representing a flattened 2D array,
 /// transpose the rows and columns of that 2D array into the output.
 /// Benchmarking shows that loop tiling isn't effective for small arrays.
-unsafe fn transpose_small<T: Copy>(input: &[T], output: &mut [T], width: usize, height: usize) {
-    for x in 0..width {
-        for y in 0..height {
+const unsafe fn transpose_small<T: Copy>(
+    input: &[T],
+    output: &mut [MU<T>],
+    width: usize,
+    height: usize,
+) {
+    let mut x = 0;
+    while x != width {
+        let mut y = 0;
+        while y != height {
             let input_index = x + y * width;
             let output_index = y + x * height;
-
-            *output.get_unchecked_mut(output_index) = *input.get_unchecked(input_index);
+            (*output.as_mut_ptr().add(output_index)).write(*input.as_ptr().add(input_index));
+            y += 1;
         }
+        x += 1;
     }
 }
 
@@ -65,7 +87,7 @@ unsafe fn transpose_small<T: Copy>(input: &[T], output: &mut [T], width: usize, 
 // SAFETY: Width * height must equal input.len() and output.len(), start_x + block_width must be <= width, start_y + block height must be <= height
 unsafe fn transpose_block<T: Copy>(
     input: &[T],
-    output: &mut [T],
+    output: &mut [MU<T>],
     width: usize,
     height: usize,
     start_x: usize,
@@ -81,7 +103,7 @@ unsafe fn transpose_block<T: Copy>(
             let input_index = x + y * width;
             let output_index = y + x * height;
 
-            *output.get_unchecked_mut(output_index) = *input.get_unchecked(input_index);
+            (*output.as_mut_ptr().add(output_index)).write(*input.as_ptr().add(input_index));
         }
     }
 }
@@ -91,7 +113,7 @@ unsafe fn transpose_block<T: Copy>(
 // This function works as `transpose_block`, but also divides the loop into a number of segments. This makes it more cache fiendly for large sizes.
 unsafe fn transpose_block_segmented<T: Copy>(
     input: &[T],
-    output: &mut [T],
+    output: &mut [MU<T>],
     width: usize,
     height: usize,
     start_x: usize,
@@ -109,7 +131,7 @@ unsafe fn transpose_block_segmented<T: Copy>(
                 let input_index = x + y * width;
                 let output_index = y + x * height;
 
-                *output.get_unchecked_mut(output_index) = *input.get_unchecked(input_index);
+                (*output.as_mut_ptr().add(output_index)).write(*input.as_ptr().add(input_index));
             }
         }
     }
@@ -122,7 +144,7 @@ unsafe fn transpose_block_segmented<T: Copy>(
 /// data for each tile fits in the caches.  
 fn transpose_tiled<T: Copy>(
     input: &[T],
-    output: &mut [T],
+    output: &mut [MU<T>],
     input_width: usize,
     input_height: usize,
 ) {
@@ -207,7 +229,7 @@ fn transpose_tiled<T: Copy>(
 /// Once they are small enough, they are transposed using a tiling algorithm.
 fn transpose_recursive<T: Copy>(
     input: &[T],
-    output: &mut [T],
+    output: &mut [MU<T>],
     row_start: usize,
     row_end: usize,
     col_start: usize,
@@ -342,34 +364,46 @@ fn transpose_recursive<T: Copy>(
 ///
 /// Given an input array of size input_width * input_height, representing flattened 2D data stored in row-major order,
 /// transpose the rows and columns of that input array into the output array
-/// ```
-/// // row-major order: the rows of our 2D array are contiguous,
-/// // and the columns are strided
-/// let input_array = vec![ 1, 2, 3,
-/// 						4, 5, 6];
-///
-/// // Treat our 6-element array as a 2D 3x2 array, and transpose it to a 2x3 array
-/// let mut output_array = vec![0; 6];
-/// transpose::transpose(&input_array, &mut output_array, 3, 2);
-///
-/// // The rows have become the columns, and the columns have become the rows
-/// let expected_array =  vec![ 1, 4,
-///								2, 5,
-///								3, 6];
-/// assert_eq!(output_array, expected_array);
-///
-/// // If we transpose it again, we should get our original data back.
-/// let mut final_array = vec![0; 6];
-/// transpose::transpose(&output_array, &mut final_array, 2, 3);
-/// assert_eq!(final_array, input_array);
-/// ```
-///
 /// # Safety
 ///
 /// UB if `input.len() != input_width * input_height` or if `output.len() != input_width * input_height`
-pub unsafe fn transpose<T: Copy>(
+pub const unsafe fn transpose<T: Copy>(
     input: &[T],
-    output: &mut [T],
+    output: &mut [MU<T>],
+    input_width: usize,
+    input_height: usize,
+) {
+    const fn const_version<T: Copy>(a: &[T], b: &mut [MU<T>], c: usize, d: usize) {
+        unsafe { transpose_small(a, b, c, d) }
+    }
+    fn normal<T: Copy>(a: &[T], b: &mut [MU<T>], c: usize, d: usize) {
+        unsafe { transpose_(a, b, c, d) }
+    }
+    const_eval_select(
+        (input, output, input_width, input_height),
+        const_version,
+        normal,
+    )
+}
+/// Transposed array. Good!
+/// ```
+/// let input_array = [1, 2, 3,
+///                    4, 5, 6];
+/// assert_eq!(mattr::transposed::<u8, 3, 2>(input_array),
+///     [ 1, 4,
+///       2, 5,
+///       3, 6]
+/// );
+/// ```
+pub const fn transposed<T: Copy, const W: usize, const H: usize>(input: [T; W * H]) -> [T; W * H] {
+    let mut output = [const { MU::uninit() }; W * H];
+    unsafe { transpose(&input, &mut output, W, H) };
+    unsafe { MU::array_assume_init(output) }
+}
+
+unsafe fn transpose_<T: Copy>(
+    input: &[T],
+    output: &mut [MU<T>],
     input_width: usize,
     input_height: usize,
 ) {
