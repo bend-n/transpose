@@ -39,11 +39,7 @@
 #![feature(
     generic_const_exprs,
     maybe_uninit_array_assume_init,
-    const_mut_refs,
-    const_refs_to_cell,
-    const_maybe_uninit_array_assume_init,
     core_intrinsics,
-    const_maybe_uninit_write,
     const_eval_select
 )]
 
