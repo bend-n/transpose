@@ -37,13 +37,14 @@
 #![no_std]
 #![allow(internal_features, incomplete_features)]
 #![feature(
+    const_trait_impl,
     generic_const_exprs,
     maybe_uninit_array_assume_init,
     core_intrinsics,
     const_eval_select
 )]
 
-use core::intrinsics::const_eval_select;
+use core::intrinsics::{const_eval_select, transmute_unchecked};
 use core::mem::MaybeUninit as MU;
 // Block size used by the tiling algoritms
 const BLOCK_SIZE: usize = 16;
@@ -383,6 +384,7 @@ pub const unsafe fn transpose<T: Copy>(
 }
 /// Transposed array. Good!
 /// ```
+/// #![feature(generic_const_exprs)]
 /// let input_array = [1, 2, 3,
 ///                    4, 5, 6];
 /// assert_eq!(mattr::transposed::<u8, 3, 2>(input_array),
@@ -395,6 +397,26 @@ pub const fn transposed<T: Copy, const W: usize, const H: usize>(input: [T; W * 
     let mut output = [const { MU::uninit() }; W * H];
     unsafe { transpose(&input, &mut output, W, H) };
     unsafe { MU::array_assume_init(output) }
+}
+
+/// Transpose array, but like, not flat.
+///
+/// ```
+/// #![feature(generic_const_exprs)]
+/// let input_array = [[1, 2, 3],
+///                    [4, 5, 6]];
+/// assert_eq!(mattr::transpose_array(input_array), [[1, 4], [2, 5], [3, 6]]);
+/// ```
+pub const fn transpose_array<T: Copy, const W: usize, const H: usize>(
+    input: [[T; W]; H],
+) -> [[T; H]; W]
+where
+    [(); W * H]:,
+{
+    unsafe {
+        let t = transposed::<T, W, H>(transmute_unchecked(input));
+        t.as_ptr().cast::<[[T; H]; W]>().read()
+    }
 }
 
 unsafe fn transpose_<T: Copy>(
